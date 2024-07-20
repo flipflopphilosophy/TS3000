@@ -1,0 +1,278 @@
+OpenAI API migration guide
+
+v1.0.0 Migration Guide #742
+ Locked
+rattrayalex started this conversation in General
+v1.0.0 Migration Guide
+#742
+@rattrayalex
+rattrayalex
+on Nov 8, 2023 · 73 comments · 207 replies
+Return to top
+
+rattrayalex
+on Nov 8, 2023
+Collaborator
+We have released a new major version of our SDK, and we recommend upgrading promptly.
+
+It's a total rewrite of the library, so many things have changed, but we've made upgrading easy with a code migration script and detailed docs below. It was extensively beta tested prior to release.
+
+Getting started
+pip install --upgrade openai
+What's changed
+Auto-retry with backoff if there's an error
+Proper types (for mypy/pyright/editors)
+You can now instantiate a client, instead of using a global default.
+Switch to explicit client instantiation
+Weights and Biases CLI will now be included in their own package
+Migration guide
+For Azure OpenAI users, see Microsoft's Azure-specific migration guide.
+
+Automatic migration with grit
+You can automatically migrate your codebase using grit, either online or with the following CLI command on Mac or Linux:
+
+openai migrate
+The grit binary executes entirely locally with AST-based transforms.
+
+Be sure to audit its changes: we suggest ensuring you have a clean working tree beforehand, and running git add --patch afterwards. Note that grit.io also offers opt-in automatic fixes powered by AI.
+
+Automatic migration with grit on Windows
+To use grit to migrate your code on Windows, you will need to use Windows Subsystem for Linux (WSL). Installing WSL is quick and easy, and you do not need to keep using Linux once the command is done.
+
+Here's a step-by-step guide for setting up and using WSL for this purpose:
+
+Open a PowerShell or Command Prompt as an administrator and run wsl --install.
+Restart your computer.
+Open the WSL application.
+In the WSL terminal, cd into the appropriate directory (e.g., cd /mnt/c/Users/Myself/my/code/) and then run the following commands:
+curl -fsSL https://docs.grit.io/install | bash
+grit install
+grit apply openai
+Then, you can close WSL and go back to using Windows.
+
+Automatic migration with grit in Jupyter Notebooks
+If your Jupyter notebooks are not in source control, they will be more difficult to migrate. You may want to copy each cell into grit's web interface, and paste the output back in.
+
+If you need to migrate in a way that preserves use of the module-level client instead of instantiated clients, you can use the openai_global grit migration instead.
+
+Initialization
+# old
+import openai
+
+openai.api_key = os.environ['OPENAI_API_KEY']
+
+# new
+from openai import OpenAI
+
+client = OpenAI(
+  api_key=os.environ['OPENAI_API_KEY'],  # this is also the default, it can be omitted
+)
+Responses
+Response objects are now pydantic models and no longer conform to the dictionary shape. However you can easily convert them to a dictionary with model.model_dump().
+
+# before
+import json
+import openai
+
+completion = openai.Completion.create(model='curie')
+print(completion['choices'][0]['text'])
+print(completion.get('usage'))
+print(json.dumps(completion, indent=2))
+
+# after
+from openai import OpenAI
+
+client = OpenAI()
+
+completion = client.completions.create(model='curie')
+print(completion.choices[0].text)
+print(dict(completion).get('usage'))
+print(completion.model_dump_json(indent=2))
+Async client
+We do not support calling asynchronous methods in the module-level client, instead you will have to instantiate an async client.
+
+The rest of the API is exactly the same as the synchronous client.
+
+# old
+import openai
+
+completion = openai.ChatCompletion.acreate(model="gpt-3.5-turbo", messages=[{"role": "user", "content": "Hello world"}])
+
+# new
+from openai import AsyncOpenAI
+
+client = AsyncOpenAI()
+completion = await client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": "Hello world"}])
+Module client
+Important
+
+We highly recommend instantiating client instances instead of relying on the global client.
+
+We also expose a global client instance that is accessible in a similar fashion to versions prior to v1.
+
+import openai
+
+# optional; defaults to `os.environ['OPENAI_API_KEY']`
+openai.api_key = '...'
+
+# all client options can be configured just like the `OpenAI` instantiation counterpart
+openai.base_url = "https://..."
+openai.default_headers = {"x-foo": "true"}
+
+completion = openai.chat.completions.create(
+    model="gpt-4",
+    messages=[
+        {
+            "role": "user",
+            "content": "How do I output all files in a directory using Python?",
+        },
+    ],
+)
+print(completion.choices[0].message.content)
+The API is the exact same as the standard client instance based API.
+
+This is intended to be used within REPLs or notebooks for faster iteration, not in application code.
+
+We recommend that you always instantiate a client (e.g., with client = OpenAI()) in application code because:
+
+It can be difficult to reason about where client options are configured
+It's not possible to change certain client options without potentially causing race conditions
+It's harder to mock for testing purposes
+It's not possible to control cleanup of network connections
+Pagination
+All list() methods that support pagination in the API now support automatic iteration, for example:
+
+from openai import OpenAI
+
+client = OpenAI()
+
+for job in client.fine_tuning.jobs.list(limit=1):
+    print(job)
+Previously you would have to explicitly call a .auto_paging_iter() method instead.
+See the README for more details.
+
+Introduction
+You can interact with the API through HTTP requests from any language, via our official Python bindings, our official Node.js library, or a community-maintained library.
+
+To install the official Python bindings, run the following command:
+
+pip install openai
+To install the official Node.js library, run the following command in your Node.js project directory:
+
+npm install openai@^4.0.0
+Authentication
+API keys
+The OpenAI API uses API keys for authentication. You can create API keys at a user or service account level. Service accounts are tied to a "bot" individual and should be used to provision access for production systems. Each API key can be scoped to one of the following,
+
+Project keys - Provides access to a single project (preferred option); access Project API keys by selecting the specific project you wish to generate keys against.
+User keys - Our legacy keys. Provides access to all organizations and all projects that user has been added to; access API Keys to view your available keys. We highly advise transitioning to project keys for best security practices, although access via this method is currently still supported.
+Remember that your API key is a secret! Do not share it with others or expose it in any client-side code (browsers, apps). Production requests must be routed through your own backend server where your API key can be securely loaded from an environment variable or key management service.
+
+All API requests should include your API key in an Authorization HTTP header as follows:
+
+Authorization: Bearer OPENAI_API_KEY
+Organizations and projects (optional)
+For users who belong to multiple organizations or are accessing their projects through their legacy user API key, you can pass a header to specify which organization and project is used for an API request. Usage from these API requests will count as usage for the specified organization and project.
+
+To access the Default project in an organization, leave out the OpenAI-Project header
+
+Example curl command:
+
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "OpenAI-Organization: org-gN3XuZHXIhlhvN7RIDubr1Ek" \
+  -H "OpenAI-Project: $PROJECT_ID"
+Example with the openai Python package:
+
+from openai import OpenAI
+
+client = OpenAI(
+  organization='org-gN3XuZHXIhlhvN7RIDubr1Ek',
+  project='$PROJECT_ID',
+)
+Example with the openai Node.js package:
+
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+    organization: "org-gN3XuZHXIhlhvN7RIDubr1Ek",
+    project: "$PROJECT_ID",
+});
+Organization IDs can be found on your Organization settings page. Project IDs can be found on your General settings page by selecting the specific project.
+
+Making requests
+You can paste the command below into your terminal to run your first API request. Make sure to replace $OPENAI_API_KEY with your secret API key. If you are using a legacy user key and you have multiple projects, you will also need to specify the Project Id. For improved security, we recommend transitioning to project based keys instead.
+
+curl https://api.openai.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{
+     "model": "gpt-4o-mini",
+     "messages": [{"role": "user", "content": "Say this is a test!"}],
+     "temperature": 0.7
+   }'
+This request queries the gpt-4o-mini model (which under the hood points to a gpt-4o-mini model variant) to complete the text starting with a prompt of "Say this is a test". You should get a response back that resembles the following:
+
+{
+    "id": "chatcmpl-abc123",
+    "object": "chat.completion",
+    "created": 1677858242,
+    "model": "gpt-4o-mini",
+    "usage": {
+        "prompt_tokens": 13,
+        "completion_tokens": 7,
+        "total_tokens": 20
+    },
+    "choices": [
+        {
+            "message": {
+                "role": "assistant",
+                "content": "\n\nThis is a test!"
+            },
+            "logprobs": null,
+            "finish_reason": "stop",
+            "index": 0
+        }
+    ]
+}
+Now that you've generated your first chat completion, let's break down the response object. We can see the finish_reason is stop which means the API returned the full chat completion generated by the model without running into any limits. In the choices list, we only generated a single message but you can set the n parameter to generate multiple messages choices.
+
+Streaming
+The OpenAI API provides the ability to stream responses back to a client in order to allow partial results for certain requests. To achieve this, we follow the Server-sent events standard. Our official Node and Python libraries include helpers to make parsing these events simpler.
+
+Streaming is supported for both the Chat Completions API and the Assistants API. This section focuses on how streaming works for Chat Completions. Learn more about how streaming works in the Assistants API here.
+
+In Python, a streaming request looks like:
+
+from openai import OpenAI
+
+client = OpenAI()
+
+stream = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Say this is a test"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices[0].delta.content is not None:
+        print(chunk.choices[0].delta.content, end="")
+In Node / Typescript, a streaming request looks like:
+
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+async function main() {
+    const stream = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Say this is a test" }],
+        stream: true,
+    });
+    for await (const chunk of stream) {
+        process.stdout.write(chunk.choices[0]?.delta?.content || "");
+    }
+}
+
+main();
+Parsing Server-sent events
+Parsing Server-sent events is non-trivial and should be done with caution. Simple strategies like splitting by a new line may result in parsing errors. We recommend using existing client libraries when possible.

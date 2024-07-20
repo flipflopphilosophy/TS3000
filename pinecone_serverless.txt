@@ -1,0 +1,250 @@
+Serverless architecture
+This page describes the Pinecone architecture for serverless indexes.
+
+​
+Overview
+Pinecone serverless runs as a managed service on the AWS cloud platform, with support for GCP and Azure cloud platforms coming soon. Within a given cloud region, client requests go through an API gateway to either a control plane or data plane. All vector data is written to highly efficient, distributed object storage.
+
+
+​
+API gateway
+Requests to Pinecone serverless contain an API key assigned to a specific project. Each incoming request is load-balanced through an edge proxy to an authentication service that verifies that the API key is valid for the targeted project. If so, the proxy routes the request to either the control plane or the data plane, depending on the type of work to be performed.
+
+​
+Control plane
+The control plane handles requests to manage organizational objects, such as projects, indexes, and API keys. The control plane uses a dedicated database as the source of truth about these objects. Other services, such as the authentication service, also cache control plane data locally for performance optimization.
+
+​
+Data plane
+The data plane handles requests to write and read records in indexes. Indexes are partitioned into one or more logical namespaces, and all write and read requests are scoped by namespace.
+
+Writes and reads follow separate paths, with compute resources auto-scaling independently based on demand. The separation of compute resources ensures that queries never impact write throughput and writes never impact query latency. The auto-scaling of compute resources, combined with highly efficient blob storage, reduces cost, as you pay only for what you use.
+
+​
+Object storage
+For each namespace in a serverless index, Pinecone clusters records that are likely to be queried together and identifies a centroid dense vector to represent each cluster. These clusters and centroids are stored as data files in distributed object storage that provides virtually limitless data scalability and guaranteed high-availability.
+
+Clustering is based on the dense vector values of records. There is no distinct clustering for sparse vector values. For more details, see Sparse vector considerations
+​
+Write path
+
+When the data plane receives a request to add, update, or delete records in the namespace of an index, the following takes place:
+
+​
+Log writers
+A writer commits the raw data to object storage and records a log sequence number (LSN) for the commit in a write ahead log (WAL). LSNs are monotonically increasing and ensure both that operations are applied in the order that they are received and, if necessary, can be replayed in the order that they are received.
+
+At this point, Pinecone returns a 200 OK response to the client, guaranteeing the durability of the write, and two processes begin in parallel: The index is rebuilt and the records are added to a separate freshness layer.
+
+​
+Index builder
+The index builder takes the raw data from object storage, identifies the relevant clusters based on cluster centroids, and then writes the changes to the cluster data files in object storage. It takes around 10 minutes for the changes to be visible to queries.
+
+​
+Freshness layer
+Parallel to index building, the write is sent to the freshness layer. The freshness layer ensures that data that hasn’t yet been clustered by the index builder is available to be searched in seconds rather than minutes. It adds newly added vectors to an in-memory index that is periodically flushed based on the index builder progress.
+
+The freshness layer can hold up to 2 million records in memory for each namespace in an index. In cases where more than 2 million records are upserted into a namespace, during the time it takes for the index builder to apply the changes, clients see the last state of the namespace plus the 2 million records in the freshness layer.
+​
+Read path
+
+When the data plane receives a query to search records in the namespace of an index, the following takes place:
+
+​
+Query planners
+A query planner identifies the most relevant clusters to search and sends a logical query plan to a sharded backend of stateless query executors that dynamically auto-scale based on system load.
+
+The query planner chooses clusters based on the similarity of their centroid vectors to the dense vector value in the query. If the query includes a metadata filter, the query planner first uses internal metadata statistics to exclude clusters that do not have records matching the filter and then chooses clusters based on the similarity of their centroid vector to the dense vector value in the query.
+
+​
+Query executors
+Query executors run the logical query plan. Whenever possible, the plan is run against a local cache of the chosen cluster data files. Otherwise, the executors fetch the chosen cluster data files from object storage, run the query against the files, and cache the cluster files locally for future queries.
+
+Query executors select records based on the similarity of their dense vector value to the dense vector value in the query and then identify the top_k records.
+
+If the query includes a metadata filter, query executors exclude records that don’t match the filter before identifying the top_k records.
+If the query includes a sparse vector value (i.e., hybrid search), query executors select records based on the similarity of both their dense and sparse vector values to the dense and sparse vector value in the query and then identify the top_k records.
+In parallel, records are selected from the freshness layer in the same way.
+
+The top_k records from the cluster data files and from the freshness layer are then merged and deduplicated, and final results are returned to the client.
+
+Create a serverless index
+To create a serverless index, use the spec parameter to define the cloud and region where the index should be deployed. For Python, you also need to import the ServerlessSpec class.
+
+Serverless indexes are in general availability on AWS and in public preview on GCP and Azure. Check the serverless limits and restrictions.
+
+
+Python
+
+JavaScript
+
+Java
+
+curl
+
+from pinecone.grpc import PineconeGRPC as Pinecone
+from pinecone import ServerlessSpec
+
+pc = Pinecone(api_key="YOUR_API_KEY")
+
+pc.create_index(
+  name="serverless-index",
+  dimension=1536,
+  metric="cosine",
+  spec=ServerlessSpec(
+    cloud="aws",
+    region="us-east-1"
+  )
+)
+​
+Create a pod-based index
+To create a pod-based index, import the PodSpec class and use the spec parameter to define the environment where the index should be deployed, the pod type and size to use, and other index characteristics:
+
+
+Python
+
+JavaScript
+
+Java
+
+curl
+
+from pinecone.grpc import PineconeGRPC as Pinecone, PodSpec
+
+pc = Pinecone(api_key="YOUR_API_KEY")
+
+pc.create_index(
+  name="pod-index",
+  dimension=1536,
+  metric="cosine",
+  spec=PodSpec(
+    environment="us-west1-gcp",
+    pod_type="p1.x1",
+    pods=1
+  )
+)
+For the full list of parameters available to customize an index, see the create_index API reference.
+
+​
+Create an index from a collection
+Serverless indexes can be created only from collections for pod-based indexes. For more details, see Migrate a pod-based index to serverless.
+
+To create a pod-based index from a collection, use the create_index operation and provide a source_collection parameter containing the name of the collection from which you wish to create an index. The new index is queryable and writable.
+
+Creating an index from a collection generally takes about 10 minutes. Creating a p2 index from a collection can take several hours when the number of vectors is on the order of 1M.
+
+Example
+
+The following example creates an index named example-index with 128 dimensions from a collection named example-collection.
+
+
+Python
+
+JavaScript
+
+Java
+
+curl
+
+from pinecone.grpc import PineconeGRPC as Pinecone, PodSpec
+
+pc = Pinecone(api_key="YOUR_API_KEY")
+
+pc.create_index(
+  name="example-index",
+  dimension=128,
+  metric="cosine",
+  spec=PodSpec(
+    environment="us-west-1-gcp",
+    pod_type="p1.x1",
+    pods=1,
+    source_collection="example-collection"
+  )
+)
+​
+Prevent index deletion
+When creating an index, you can protect the index from accidental deletion by setting the deletion_protection parameter to enabled. For more details, see Prevent index deletion.
+
+Serverless architecture
+This page describes the Pinecone architecture for serverless indexes.
+
+​
+Overview
+Pinecone serverless runs as a managed service on the AWS cloud platform, with support for GCP and Azure cloud platforms coming soon. Within a given cloud region, client requests go through an API gateway to either a control plane or data plane. All vector data is written to highly efficient, distributed object storage.
+
+
+​
+API gateway
+Requests to Pinecone serverless contain an API key assigned to a specific project. Each incoming request is load-balanced through an edge proxy to an authentication service that verifies that the API key is valid for the targeted project. If so, the proxy routes the request to either the control plane or the data plane, depending on the type of work to be performed.
+
+​
+Control plane
+The control plane handles requests to manage organizational objects, such as projects, indexes, and API keys. The control plane uses a dedicated database as the source of truth about these objects. Other services, such as the authentication service, also cache control plane data locally for performance optimization.
+
+​
+Data plane
+The data plane handles requests to write and read records in indexes. Indexes are partitioned into one or more logical namespaces, and all write and read requests are scoped by namespace.
+
+Writes and reads follow separate paths, with compute resources auto-scaling independently based on demand. The separation of compute resources ensures that queries never impact write throughput and writes never impact query latency. The auto-scaling of compute resources, combined with highly efficient blob storage, reduces cost, as you pay only for what you use.
+
+​
+Object storage
+For each namespace in a serverless index, Pinecone clusters records that are likely to be queried together and identifies a centroid dense vector to represent each cluster. These clusters and centroids are stored as data files in distributed object storage that provides virtually limitless data scalability and guaranteed high-availability.
+
+Clustering is based on the dense vector values of records. There is no distinct clustering for sparse vector values. For more details, see Sparse vector considerations
+​
+Write path
+
+When the data plane receives a request to add, update, or delete records in the namespace of an index, the following takes place:
+
+​
+Log writers
+A writer commits the raw data to object storage and records a log sequence number (LSN) for the commit in a write ahead log (WAL). LSNs are monotonically increasing and ensure both that operations are applied in the order that they are received and, if necessary, can be replayed in the order that they are received.
+
+At this point, Pinecone returns a 200 OK response to the client, guaranteeing the durability of the write, and two processes begin in parallel: The index is rebuilt and the records are added to a separate freshness layer.
+
+​
+Index builder
+The index builder takes the raw data from object storage, identifies the relevant clusters based on cluster centroids, and then writes the changes to the cluster data files in object storage. It takes around 10 minutes for the changes to be visible to queries.
+
+​
+Freshness layer
+Parallel to index building, the write is sent to the freshness layer. The freshness layer ensures that data that hasn’t yet been clustered by the index builder is available to be searched in seconds rather than minutes. It adds newly added vectors to an in-memory index that is periodically flushed based on the index builder progress.
+
+The freshness layer can hold up to 2 million records in memory for each namespace in an index. In cases where more than 2 million records are upserted into a namespace, during the time it takes for the index builder to apply the changes, clients see the last state of the namespace plus the 2 million records in the freshness layer.
+​
+Read path
+
+When the data plane receives a query to search records in the namespace of an index, the following takes place:
+
+​
+Query planners
+A query planner identifies the most relevant clusters to search and sends a logical query plan to a sharded backend of stateless query executors that dynamically auto-scale based on system load.
+
+The query planner chooses clusters based on the similarity of their centroid vectors to the dense vector value in the query. If the query includes a metadata filter, the query planner first uses internal metadata statistics to exclude clusters that do not have records matching the filter and then chooses clusters based on the similarity of their centroid vector to the dense vector value in the query.
+
+​
+Query executors
+Query executors run the logical query plan. Whenever possible, the plan is run against a local cache of the chosen cluster data files. Otherwise, the executors fetch the chosen cluster data files from object storage, run the query against the files, and cache the cluster files locally for future queries.
+
+Query executors select records based on the similarity of their dense vector value to the dense vector value in the query and then identify the top_k records.
+
+If the query includes a metadata filter, query executors exclude records that don’t match the filter before identifying the top_k records.
+If the query includes a sparse vector value (i.e., hybrid search), query executors select records based on the similarity of both their dense and sparse vector values to the dense and sparse vector value in the query and then identify the top_k records.
+In parallel, records are selected from the freshness layer in the same way.
+
+The top_k records from the cluster data files and from the freshness layer are then merged and deduplicated, and final results are returned to the client.
+
+severless_spec.py:
+
+from typing import NamedTuple
+
+
+class ServerlessSpec(NamedTuple):
+    cloud: str
+    region: str
+
+    def asdict(self):
+        return {"serverless": self._asdict()}
+
+        

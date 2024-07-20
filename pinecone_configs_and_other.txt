@@ -1,0 +1,266 @@
+import logging
+import os
+
+from .config import ConfigBuilder, Config
+from .pinecone_config import PineconeConfig
+
+if os.getenv("PINECONE_DEBUG") != None:
+    logging.basicConfig(level=logging.DEBUG)
+
+    -
+
+    from typing import NamedTuple, Optional, Dict
+import os
+
+from pinecone.exceptions.exceptions import PineconeConfigurationError
+from pinecone.config.openapi import OpenApiConfigFactory
+from pinecone.core.openapi.shared.configuration import (
+    Configuration as OpenApiConfiguration,
+)
+from pinecone.utils import normalize_host
+from pinecone.utils.constants import SOURCE_TAG
+
+
+class Config(NamedTuple):
+    api_key: str = ""
+    host: str = ""
+    proxy_url: Optional[str] = None
+    proxy_headers: Optional[Dict[str, str]] = None
+    ssl_ca_certs: Optional[str] = None
+    ssl_verify: Optional[bool] = None
+    additional_headers: Optional[Dict[str, str]] = {}
+    source_tag: Optional[str] = None
+
+
+class ConfigBuilder:
+    """
+
+    Configurations are resolved in the following order:
+
+    - configs passed as keyword parameters
+    - configs specified in environment variables
+    - default values (if applicable)
+    """
+
+    """Initializes the Pinecone client.
+
+    :param api_key: Required if not set in config file or by environment variable ``PINECONE_API_KEY``.
+    :param host: Optional. Controller host.
+    :param openapi_config: Optional. Set OpenAPI client configuration.
+    """
+
+    @staticmethod
+    def build(
+        api_key: Optional[str] = None,
+        host: Optional[str] = None,
+        proxy_url: Optional[str] = None,
+        proxy_headers: Optional[Dict[str, str]] = None,
+        ssl_ca_certs: Optional[str] = None,
+        ssl_verify: Optional[bool] = None,
+        additional_headers: Optional[Dict[str, str]] = {},
+        **kwargs,
+    ) -> Config:
+        api_key = api_key or kwargs.pop("api_key", None) or os.getenv("PINECONE_API_KEY")
+        host = host or kwargs.pop("host", None)
+        host = normalize_host(host)
+        source_tag = kwargs.pop(SOURCE_TAG, None)
+
+        if not api_key:
+            raise PineconeConfigurationError("You haven't specified an Api-Key.")
+        if not host:
+            raise PineconeConfigurationError("You haven't specified a host.")
+
+        return Config(
+            api_key,
+            host,
+            proxy_url,
+            proxy_headers,
+            ssl_ca_certs,
+            ssl_verify,
+            additional_headers,
+            source_tag,
+        )
+
+    @staticmethod
+    def build_openapi_config(
+        config: Config,
+        openapi_config: Optional[OpenApiConfiguration] = None,
+        **kwargs,
+    ) -> OpenApiConfiguration:
+        if openapi_config:
+            openapi_config = OpenApiConfigFactory.copy(
+                openapi_config=openapi_config,
+                api_key=config.api_key,
+                host=config.host,
+            )
+        elif openapi_config is None:
+            openapi_config = OpenApiConfigFactory.build(api_key=config.api_key, host=config.host)
+
+        # Check if value passed before overriding any values present
+        # in the openapi_config. This means if the user has passed
+        # an openapi_config object and a kwarg for the same setting,
+        # the kwarg will take precedence.
+        if config.proxy_url:
+            openapi_config.proxy = config.proxy_url
+        if config.proxy_headers:
+            openapi_config.proxy_headers = config.proxy_headers
+        if config.ssl_ca_certs:
+            openapi_config.ssl_ca_cert = config.ssl_ca_certs
+        if config.ssl_verify != None:
+            openapi_config.verify_ssl = config.ssl_verify
+
+        return openapi_config
+
+        -
+
+        import sys
+from typing import List, Optional
+
+import certifi
+import socket
+import copy
+
+from urllib3.connection import HTTPConnection
+
+from pinecone.core.openapi.shared.configuration import (
+    Configuration as OpenApiConfiguration,
+)
+
+TCP_KEEPINTVL = 60  # Sec
+TCP_KEEPIDLE = 300  # Sec
+TCP_KEEPCNT = 4
+
+
+class OpenApiConfigFactory:
+    @classmethod
+    def build(cls, api_key: str, host: Optional[str] = None, **kwargs):
+        openapi_config = OpenApiConfiguration()
+        openapi_config.api_key = {"ApiKeyAuth": api_key}
+        openapi_config.host = host
+        openapi_config.ssl_ca_cert = certifi.where()
+        openapi_config.socket_options = cls._get_socket_options()
+        return openapi_config
+
+    @classmethod
+    def copy(cls, openapi_config: OpenApiConfiguration, api_key: str, host: str) -> OpenApiConfiguration:
+        """
+        Copy a user-supplied openapi configuration and update it with the user's api key and host.
+        If they have not specified other socket configuration, we will use the default values.
+        We expect these objects are being passed mainly a vehicle for proxy configuration, so
+        we don't modify those settings.
+        """
+        copied = copy.deepcopy(openapi_config)
+
+        copied.api_key = {"ApiKeyAuth": api_key}
+        copied.host = host
+
+        # Set sensible defaults if the user hasn't set them
+        if not copied.socket_options:
+            copied.socket_options = cls._get_socket_options()
+
+        # We specifically do not modify the user's ssl_ca_cert or proxy settings, as
+        # they may have set them intentionally. This is the main reason somebody would
+        # pass an openapi_config in the first place.
+
+        return copied
+
+    @classmethod
+    def _get_socket_options(
+        self,
+        do_keep_alive: bool = True,
+        keep_alive_idle_sec: int = TCP_KEEPIDLE,
+        keep_alive_interval_sec: int = TCP_KEEPINTVL,
+        keep_alive_tries: int = TCP_KEEPCNT,
+    ) -> List[tuple]:
+        """
+        Returns the socket options to pass to OpenAPI's Rest client
+        Args:
+            do_keep_alive: Whether to enable TCP keep alive mechanism
+            keep_alive_idle_sec: Time in seconds of connection idleness before starting to send keep alive probes
+            keep_alive_interval_sec: Interval time in seconds between keep alive probe messages
+            keep_alive_tries: Number of failed keep alive tries (unanswered KA messages) before terminating the connection
+
+        Returns:
+            A list of socket options for the Rest client's connection pool
+        """
+        # Source: https://www.finbourne.com/blog/the-mysterious-hanging-client-tcp-keep-alives
+
+        socket_params = HTTPConnection.default_socket_options
+        if not do_keep_alive:
+            return socket_params
+
+        socket_params += [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+
+        # TCP Keep Alive Probes for different platforms
+        platform = sys.platform
+        # TCP Keep Alive Probes for Linux
+        if (
+            platform == "linux"
+            and hasattr(socket, "TCP_KEEPIDLE")
+            and hasattr(socket, "TCP_KEEPINTVL")
+            and hasattr(socket, "TCP_KEEPCNT")
+        ):
+            socket_params += [(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, keep_alive_idle_sec)]
+            socket_params += [
+                (
+                    socket.IPPROTO_TCP,
+                    socket.TCP_KEEPINTVL,
+                    keep_alive_interval_sec,
+                )
+            ]
+            socket_params += [(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, keep_alive_tries)]
+
+        # TCP Keep Alive Probes for Windows OS
+        # NOTE: Changing TCP KA params on windows is done via a different mechanism which OpenAPI's Rest client doesn't expose.
+        # Since the default values work well, it seems setting `(socket.SO_KEEPALIVE, 1)` is sufficient.
+        # Leaving this code here for future reference.
+        # elif platform == 'win32' and hasattr(socket, "SIO_KEEPALIVE_VALS"):
+        #     socket.ioctl((socket.SIO_KEEPALIVE_VALS, (1, keep_alive_idle_sec * 1000, keep_alive_interval_sec * 1000)))
+
+        # TCP Keep Alive Probes for Mac OS
+        elif platform == "darwin":
+            TCP_KEEPALIVE = 0x10
+            socket_params += [(socket.IPPROTO_TCP, TCP_KEEPALIVE, keep_alive_interval_sec)]
+
+        return socket_params
+
+        -
+
+        from typing import Optional, Dict
+import logging
+import json
+import os
+from .config import ConfigBuilder, Config
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CONTROLLER_HOST = "https://api.pinecone.io"
+
+
+class PineconeConfig:
+    @staticmethod
+    def build(
+        api_key: Optional[str] = None,
+        host: Optional[str] = None,
+        additional_headers: Optional[Dict[str, str]] = {},
+        **kwargs,
+    ) -> Config:
+        host = host or kwargs.get("host") or os.getenv("PINECONE_CONTROLLER_HOST") or DEFAULT_CONTROLLER_HOST
+        headers_json = os.getenv("PINECONE_ADDITIONAL_HEADERS")
+        if headers_json:
+            try:
+                headers = json.loads(headers_json)
+                additional_headers = additional_headers or headers
+            except Exception as e:
+                logger.warn(f"Ignoring PINECONE_ADDITIONAL_HEADERS: {e}")
+
+        return ConfigBuilder.build(
+            api_key=api_key,
+            host=host,
+            additional_headers=additional_headers,
+            **kwargs,
+        )
+
+        -
+
+        

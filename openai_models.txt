@@ -1,0 +1,57 @@
+Models
+Flagship models
+GPT-4o
+Our high-intelligence flagship model for complex, multi‑step tasks
+
+Text and image input, text output
+128k context length
+Input: $5 | Output: $15*
+GPT-4o mini
+New
+Our affordable and intelligent small model for fast, lightweight tasks
+
+Text and image input, text output
+128k context length
+Input: $0.15 | Output: $0.60*
+* prices per 1M tokens
+
+Models overview
+The OpenAI API is powered by a diverse set of models with different capabilities and price points. You can also make customizations to our models for your specific use case with fine-tuning.
+
+MODEL	DESCRIPTION
+GPT-4o	Our high-intelligence flagship model for complex, multi-step tasks
+GPT-4o mini	Our affordable and intelligent small model for fast, lightweight tasks
+GPT-4 Turbo and GPT-4	The previous set of high-intelligence models
+GPT-3.5 Turbo	A fast, inexpensive model for simple tasks
+DALL·E	A model that can generate and edit images given a natural language prompt
+TTS	A set of models that can convert text into natural sounding spoken audio
+Whisper	A model that can convert audio into text
+Embeddings	A set of models that can convert text into a numerical form
+Moderation	A fine-tuned model that can detect whether text may be sensitive or unsafe
+GPT base	A set of models without instruction following that can understand as well as generate natural language or code
+Deprecated	A full list of models that have been deprecated along with the suggested replacement
+We have also published open source models including Point-E, Whisper, Jukebox, and CLIP.
+
+Continuous model upgrades
+gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, and gpt-3.5-turbo point to their respective latest model version. You can verify this by looking at the response object after sending a request. The response will include the specific model version used (e.g. gpt-3.5-turbo-1106).
+
+We also offer pinned model versions that developers can continue using for at least three months after an updated model has been introduced. With the new cadence of model updates, we are also giving people the ability to contribute evals to help us improve the model for different use cases. If you are interested, check out the OpenAI Evals repository.
+
+Learn more about model deprecation on our deprecation page.
+
+GPT-4o
+GPT-4o (“o” for “omni”) is our most advanced model. It is multimodal (accepting text or image inputs and outputting text), and it has the same high intelligence as GPT-4 Turbo but is much more efficient—it generates text 2x faster and is 50% cheaper. Additionally, GPT-4o has the best vision and performance across non-English languages of any of our models. GPT-4o is available in the OpenAI API to paying customers. Learn how to use GPT-4o in our text generation guide.
+
+MODEL	DESCRIPTION	CONTEXT WINDOW	TRAINING DATA
+gpt-4o	GPT-4o
+Our high-intelligence flagship model for complex, multi-step tasks. GPT-4o is cheaper and faster than GPT-4 Turbo. Currently points to gpt-4o-2024-05-13.	128,000 tokens	Up to Oct 2023
+gpt-4o-2024-05-13	gpt-4o currently points to this version.	128,000 tokens	Up to Oct 2023
+GPT-4o mini
+GPT-4o mini (“o” for “omni”) is our most advanced model in the small models category, and our cheapest model yet. It is multimodal (accepting text or image inputs and outputting text), has higher intelligence than gpt-3.5-turbo but is just as fast. It is meant to be used for smaller tasks, including vision tasks.
+
+We recommend choosing gpt-4o-mini where you would have previously used gpt-3.5-turbo as this model is more capable and cheaper.
+
+MODEL	DESCRIPTION	CONTEXT WINDOW	TRAINING DATA
+gpt-4o-mini	New GPT-4o-mini
+Our affordable and intelligent small model for fast, lightweight tasks. GPT-4o mini is cheaper and more capable than GPT-3.5 Turbo. Currently points to gpt-4o-mini-2024-07-18.	128,000 tokens	Up to Oct 2023
+gpt-4o-mini-2024-07-18	gpt-4o-mini currently points to this version.	128,000 tokens	Up to Oct 2023
